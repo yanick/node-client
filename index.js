@@ -87,32 +87,33 @@ function addExtraNvimMethods(Nvim) {
 module.exports = function attach(writer, reader, cb) {
   var session = new Session([]);
   var initSession = session;
-  var nvim = new Nvim(session)
+  var nvim = new Nvim(session);
+
   var pendingRPCs = [];
-  var calledCallback = false;
-
-  session.attach(writer, reader);
-
-  // register initial RPC handlers to queue non-specs requests until api is generated
-  session.on('request', function(method, args, resp) {
+  var queueRequests = function(method, args, resp) {
     if (method !== 'specs') {
       pendingRPCs.push({
         type: 'request',
         args: Array.prototype.slice.call(arguments)
       });
     } else {
-      cb(null, nvim) // the errback may be called later, but 'specs' must be handled
-      calledCallback = true;
       nvim.emit('request', decode(method), decode(args), resp);
     }
-  });
-
-  session.on('notification', function(method, args) {
+  }
+  var queueNotifications = function(method, args) {
     pendingRPCs.push({
       type: 'notification',
       args: Array.prototype.slice.call(arguments)
     });
-  });
+  }
+
+  session.attach(writer, reader);
+
+  cb(null, nvim);
+
+  // register initial RPC handlers to queue non-specs requests until api is generated
+  session.on('request', queueRequests);
+  session.on('notification', queueNotifications);
 
   session.on('detach', function() {
     session.removeAllListeners('request');
@@ -163,37 +164,22 @@ module.exports = function attach(writer, reader, cb) {
 
     generateWrappers(Nvim, types, metadata);
     addExtraNvimMethods(Nvim);
-    session = new Session(extTypes);
-    session.attach(writer, reader);
-
-    nvim = new Nvim(session, channel_id);
+    session.addTypes(extTypes);
 
     // register the non-queueing handlers
+    session.removeListener('request', queueRequests);
     session.on('request', function(method, args, resp) {
       nvim.emit('request', decode(method), decode(args), resp);
     });
 
+    session.removeListener('notification', queueNotifications);
     session.on('notification', function(method, args) {
       nvim.emit('notification', decode(method), decode(args));
     });
 
-    session.on('detach', function() {
-      session.removeAllListeners('request');
-      session.removeAllListeners('notification');
-      nvim.emit('disconnect');
-    });
-
-    cb(null, nvim);
-
     // dequeue any pending RPCs
-    initSession.detach();
     pendingRPCs.forEach(function(pending) {
-      if(pending.type === 'request') {
-        // there's no clean way to change the output channel using the current
-        // Session abstraction
-        pending.args[pending.args.length - 1]._encoder = session._encoder;
-      }
-      nvim.emit.apply(nvim, [].concat(pending.type, pending.args));
+      nvim.emit.apply(nvim, Array.prototype.concat(pending.type, pending.args));
     });
   });
 };
