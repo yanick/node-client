@@ -53,7 +53,9 @@ export class Buffer extends BaseApi {
     return this.request(`${this.prefix}line_count`, [this]);
   }
 
-  /** Get lines in buffer */
+  /**
+   * Get all lines in buffer
+   */
   get lines(): Promise<Array<string>> {
     return this.getLines();
   }
